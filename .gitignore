@@ -1,6 +1,20 @@
+# Local dependencies and Python caches
 .venv/
-build/
 __pycache__/
-.DS_Store
+*.py[cod]
+
+# CMake build trees and generated compilation databases
+/build/
+/build-*/
+/cmake-build-*/
+/compile_commands.json
+
+# clangd index caches (keep a possible .clangd configuration file trackable)
+.clangd/
+.cache/clangd/
+
+# Local environment and OS metadata
 .env
 .env.*
+!.env.example
+.DS_Store
