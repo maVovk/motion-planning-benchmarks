@@ -18,3 +18,8 @@ __pycache__/
 .env.*
 !.env.example
 .DS_Store
+.vscode
+
+# Large, reproducible perf recordings (SVGs and folded stacks remain trackable)
+/results/planning/profiles/*.data
+/results/planning/profiles/*.data.old
