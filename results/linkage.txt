@@ -1,0 +1,8 @@
+build/coal_benchmark:
+	@rpath/libcoal.dylib (compatibility version 0.0.0, current version 0.0.0)
+	@rpath/libboost_serialization.dylib (compatibility version 0.0.0, current version 0.0.0)
+	@rpath/libboost_filesystem.dylib (compatibility version 0.0.0, current version 0.0.0)
+	@rpath/liboctomap.1.10.dylib (compatibility version 1.10.0, current version 1.10.0)
+	@rpath/liboctomath.1.10.dylib (compatibility version 1.10.0, current version 1.10.0)
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2200.27.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
