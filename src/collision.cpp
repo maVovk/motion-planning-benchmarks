@@ -1,7 +1,5 @@
 #include "mpb/collision.hpp"
 
-#include "mpb/scene.hpp"
-
 #include <coal/collision.h>
 
 namespace mpb {
@@ -15,7 +13,7 @@ void CollisionCallback::init() {
   candidates = 0;
 }
 
-bool CollisionCallback::collide(Object* first, Object* second) {
+bool CollisionCallback::collide(coal::CollisionObject* first, coal::CollisionObject* second) {
   ++candidates;
   result.clear();
   coal::collide(first, second, request, result);

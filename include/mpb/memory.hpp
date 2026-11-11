@@ -8,7 +8,6 @@ struct MemorySnapshot {
   std::int64_t rss_bytes;
 };
 
-// Retained process heap and resident memory, not peak allocations.
 MemorySnapshot memorySnapshot();
 
 }  // namespace mpb

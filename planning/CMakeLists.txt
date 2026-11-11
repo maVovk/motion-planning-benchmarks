@@ -39,9 +39,9 @@ FetchContent_MakeAvailable(json)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(UR5_PAIRS "${CMAKE_CURRENT_BINARY_DIR}/generated/ur5_pairs.hpp")
 add_custom_command(OUTPUT "${UR5_PAIRS}"
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/extract_ur5_pairs.py"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_ur5_pairs.py"
     "${vamp_SOURCE_DIR}/src/impl/vamp/robots/ur5.hh" "${UR5_PAIRS}"
-  DEPENDS "${PROJECT_SOURCE_DIR}/scripts/extract_ur5_pairs.py" "${vamp_SOURCE_DIR}/src/impl/vamp/robots/ur5.hh"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_ur5_pairs.py" "${vamp_SOURCE_DIR}/src/impl/vamp/robots/ur5.hh"
   VERBATIM)
 
 add_library(mpb_planning
@@ -66,7 +66,7 @@ target_compile_options(planning_benchmark PRIVATE -Wall -Wextra -g -fno-omit-fra
 add_custom_target(build_planning DEPENDS planning_benchmark)
 
 if(BUILD_TESTING)
-  add_executable(planning_tests ../tests/planning_tests.cpp)
+  add_executable(planning_tests tests/planning_tests.cpp)
   target_link_libraries(planning_tests PRIVATE mpb_planning)
   add_dependencies(build_planning planning_tests)
   add_test(NAME planning_correctness COMMAND planning_tests)

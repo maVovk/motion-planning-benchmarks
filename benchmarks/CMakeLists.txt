@@ -24,20 +24,16 @@ if(NOT fmt_FOUND)
 endif()
 
 add_executable(coal_benchmark
-  ../main.cpp
+  main.cpp
+  config.cpp
   coal_benchmarks.cpp
+  memory_measurements.cpp
   workloads.cpp)
 target_include_directories(coal_benchmark PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(coal_benchmark PRIVATE mpb::core benchmark::benchmark fmt::fmt)
 target_compile_options(coal_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(coal_memory
-  memory_main.cpp
-  memory_measurements.cpp)
-target_link_libraries(coal_memory PRIVATE mpb::core)
-target_compile_options(coal_memory PRIVATE -Wall -Wextra -Wpedantic)
+add_custom_target(build_benchmarks DEPENDS coal_benchmark)
 
-add_custom_target(build_benchmarks DEPENDS coal_benchmark coal_memory)
-
-set_target_properties(coal_benchmark coal_memory PROPERTIES
+set_target_properties(coal_benchmark PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")

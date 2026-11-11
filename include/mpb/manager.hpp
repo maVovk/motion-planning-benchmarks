@@ -1,13 +1,13 @@
 #pragma once
 
-#include "mpb/scene.hpp"
-
 #include <coal/broadphase/broadphase_collision_manager.h>
 
 #include <array>
+#include <cstdint>
 #include <memory>
-#include <string>
+#include <string_view>
 #include <vector>
+
 
 namespace mpb {
 using Manager = coal::BroadPhaseCollisionManager;
@@ -15,17 +15,27 @@ using Manager = coal::BroadPhaseCollisionManager;
 struct HashConfig {
   double cell_size = 0.5;
   double half_extent = 32.0;
-  unsigned table_size = 10007;
+  std::uint32_t table_size = 10007;
 };
 
-constexpr std::array<const char*, 7> kManagers{
+enum class ManagerType {
+  Naive,
+  SaP,
+  SSaP,
+  IntervalTree,
+  Tree,
+  TreeArray,
+  Hash
+};
+
+inline constexpr std::array<std::string_view, 7> kManagerNames{
     "naive", "sap", "ssap", "interval", "tree", "tree_array", "hash"};
 
-std::unique_ptr<Manager> makeManager(const std::string& name, const HashConfig& config);
+std::unique_ptr<Manager> makeManager(ManagerType type,
+                                     const HashConfig& config);
 
-// Registered objects must outlive the returned manager. Accepts arbitrary coal
-// objects, so a future robot benchmark can reuse the same broad-phase factory.
-std::unique_ptr<Manager> buildManager(const std::string& name,
-    const std::vector<Object*>& objects, const HashConfig& config);
+std::unique_ptr<Manager> buildManager(ManagerType type,
+                                      const std::vector<coal::CollisionObject*>& objects,
+                                      const HashConfig& config);
 
 }  // namespace mpb
