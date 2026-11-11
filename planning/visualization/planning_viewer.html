@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+  <meta charset="utf-8"/>
+  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <title>
+    UR5 planning comparison
+  </title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+      background: #101821;
+      color: #e7eef6
+    }
+
+    body {
+      margin: 0
+    }
+
+    main {
+      max-width: 1100px;
+      margin: auto;
+      padding: 24px
+    }
+
+    h1 {
+      font-size: 24px;
+      margin: 0 0 8px
+    }
+
+    p {
+      color: #a6b8c9;
+      line-height: 1.5;
+      margin: 8px 0 18px
+    }
+
+    .panel {
+      background: #192530;
+      border: 1px solid #304557;
+      border-radius: 12px;
+      padding: 16px
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap
+    }
+
+    button,
+    select {
+      background: #263b4c;
+      border: 1px solid #526d80;
+      color: inherit;
+      border-radius: 6px;
+      padding: 8px
+    }
+
+    button {
+      cursor: pointer
+    }
+
+    input[type=range] {
+      flex: 1;
+      min-width: 140px;
+      accent-color: #65d6d0
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: min(65vh, 640px);
+      touch-action: none;
+      cursor: grab
+    }
+
+    .legend {
+      display: flex;
+      gap: 22px;
+      font-size: 14px;
+      color: #b8c8d6
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 7px
+    }
+
+    .stats {
+      font-variant-numeric: tabular-nums;
+      font-size: 14px;
+      color: #c9d8e4
+    }
+
+    label {
+      font-size: 14px
+    }
+
+    a {
+      color: #87dce8
+    }
+
+    @media(max-width:600px) {
+      main {
+        padding: 12px
+      }
+
+      canvas {
+        height: 50vh
+      }
+    }
+  </style>
+  <main>
+    <h1>
+      UR5 · RRTConnect implementation comparison
+    </h1>
+    <p>
+      Replay validated paths using the same 40-sphere robot geometry as the planners. Each obstacle count uses the same scene and planner seed for both implementations.
+    </p>
+    <div class="panel">
+      <div class="controls">
+        <label>
+          Recorded trial
+          <select id="trial">
+          </select>
+        </label>
+        <button id="play">
+          Pause
+        </button>
+        <button id="reset">
+          Reset view
+        </button>
+        <label>
+          Speed
+          <select id="speed">
+            <option value="0.5">
+              0.5×
+            </option>
+            <option selected="" value="1">
+              1×
+            </option>
+            <option value="2">
+              2×
+            </option>
+          </select>
+        </label>
+      </div>
+      <canvas aria-label="Interactive 3D projection of the UR5 collision spheres and obstacles" id="scene">
+      </canvas>
+      <div class="controls">
+        <input aria-label="Trajectory frame" id="frame" min="0" type="range" value="0"/>
+        <span class="stats" id="position">
+        </span>
+      </div>
+      <div class="legend">
+        <span>
+          <i class="dot" style="background:#65d6d0">
+          </i>
+          UR5 collision spheres
+        </span>
+        <span>
+          <i class="dot" style="background:#ef9d83">
+          </i>
+          Obstacle spheres
+        </span>
+      </div>
+    </div>
+    <p class="stats" id="details">
+    </p>
+    <p>
+      Drag to orbit · scroll to zoom · scrub to inspect a configuration. Playback uses joint-space interpolation at a display step of 0.05 rad; it is not a time-parameterized robot command. The benchmark validates paths at ≤1/128 rad in joint-space L2 distance. World coordinates are in metres; visualization is outside all measurements.
+    </p>
+  </main>
+  <script id="trajectory-data" type="application/json">
+    __DATA__
+  </script>
+  <script>
+    'use strict';
+    const data = JSON.parse(document.getElementById('trajectory-data').textContent);
+    const canvas = document.getElementById('scene'),
+      ctx = canvas.getContext('2d');
+    const select = document.getElementById('trial'),
+      slider = document.getElementById('frame');
+    let chosen = data[0],
+      frame = 0,
+      playing = true,
+      yaw = -0.7,
+      pitch = 0.3,
+      zoom = 1,
+      last = 0,
+      accumulator = 0;
+    for (let i = 0; i < data.length; i++) {
+      const t = data[i],
+        o = document.createElement('option');
+      o.value = i;
+      o.textContent = `${t.planner.toUpperCase()} · ${t.obstacles.length} obstacles · scene ${t.scene_seed}`;
+      select.appendChild(o)
+    }
+
+    function changeTrial() {
+      chosen = data[Number(select.value)];
+      frame = 0;
+      accumulator = 0;
+      slider.max = Math.max(0, chosen.frames.length - 1);
+      slider.value = 0;
+      document.getElementById('details').textContent = `Planner: ${chosen.planner.toUpperCase()} | Scene seed: ${chosen.scene_seed} | Planner seed: ${chosen.planner_seed} | Waypoints: ${chosen.path.length} | Frames: ${chosen.frames.length}`;
+      draw()
+    }
+    select.onchange = changeTrial;
+    slider.oninput = () => {
+      frame = Number(slider.value);
+      accumulator = 0;
+      draw()
+    };
+    document.getElementById('play').onclick = () => {
+      playing = !playing;
+      document.getElementById('play').textContent = playing ? 'Pause' : 'Play'
+    };
+    document.getElementById('reset').onclick = () => {
+      yaw = -0.7;
+      pitch = 0.3;
+      zoom = 1;
+      draw()
+    };
+    let drag = null;
+    canvas.onpointerdown = e => {
+      drag = [e.clientX, e.clientY];
+      canvas.setPointerCapture(e.pointerId)
+    };
+    canvas.onpointermove = e => {
+      if (!drag) {
+        return;
+      }
+      yaw += (e.clientX - drag[0]) * 0.008;
+      pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag[1]) * 0.008));
+      drag = [e.clientX, e.clientY];
+      draw()
+    };
+    canvas.onpointerup = () => drag = null;
+    canvas.onpointercancel = () => drag = null;
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      zoom = Math.max(.4, Math.min(3, zoom * Math.exp(-e.deltaY * .001)));
+      draw()
+    }, {
+      passive: false
+    });
+
+    function project(p) {
+      const x = p[0],
+        y = p[1],
+        z = p[2] - .95,
+        rx = Math.cos(yaw) * x - Math.sin(yaw) * y,
+        ry = Math.sin(yaw) * x + Math.cos(yaw) * y;
+      return [canvas.clientWidth / 2 + rx * scale, canvas.clientHeight / 2 - (Math.cos(pitch) * z - Math.sin(pitch) * ry) * scale, Math.cos(pitch) * ry + Math.sin(pitch) * z]
+    }
+    let scale = 1;
+
+    function line(a, b, color, label) {
+      const p = project(a),
+        q = project(b);
+      ctx.beginPath();
+      ctx.moveTo(p[0], p[1]);
+      ctx.lineTo(q[0], q[1]);
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      if (label) {
+        ctx.fillStyle = color;
+        ctx.fillText(label, q[0] + 5, q[1])
+      }
+    }
+
+    function draw() {
+      const w = canvas.clientWidth,
+        h = canvas.clientHeight,
+        dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr)
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      scale = Math.min(w, h) * .33 * zoom;
+      ctx.lineWidth = 1;
+      for (let i = -5; i <= 5; i++) {
+        line([i * .2, -1, 0], [i * .2, 1, 0], '#243747');
+        line([-1, i * .2, 0], [1, i * .2, 0], '#243747')
+      }
+      ctx.font = '12px system-ui';
+      line([0, 0, 0], [.4, 0, 0], '#ef9d83', 'x');
+      line([0, 0, 0], [0, .4, 0], '#8ecb9b', 'y');
+      line([0, 0, 0], [0, 0, .4], '#8fb8f2', 'z');
+      const spheres = chosen.obstacles.map(s => ({
+        p: s.center,
+        r: s.radius,
+        robot: false
+      }));
+      for (const s of chosen.frames[frame] || []) {
+        spheres.push({
+          p: s.slice(0, 3),
+          r: s[3],
+          robot: true
+        })
+      }
+      for (const s of spheres) {
+        s.projected = project(s.p);
+      }
+      spheres.sort((a, b) => a.projected[2] - b.projected[2]);
+      for (const s of spheres) {
+        const [x, y] = s.projected, r = Math.max(1.5, s.r * scale);
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        const g = ctx.createRadialGradient(x - r * .3, y - r * .35, r * .05, x, y, r);
+        g.addColorStop(0, s.robot ? '#b0f7e8' : '#f4b7a1');
+        g.addColorStop(1, s.robot ? '#288c99' : '#a65a55');
+        ctx.fillStyle = g;
+        ctx.globalAlpha = s.robot ? .98 : .62;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = s.robot ? '#b0f7e844' : '#f4b7a155';
+        ctx.stroke()
+      }
+      document.getElementById('position').textContent = `${frame+1} / ${chosen.frames.length}`
+    }
+
+    function animate(now) {
+      if (last && playing && chosen.frames.length) {
+        accumulator += (now - last) * Number(document.getElementById('speed').value);
+        while (accumulator >= 35) {
+          frame = (frame + 1) % chosen.frames.length;
+          accumulator -= 35
+        }
+        slider.value = frame
+      }
+      last = now;
+      draw();
+      requestAnimationFrame(animate)
+    }
+    window.addEventListener('resize', draw);
+    changeTrial();
+    requestAnimationFrame(animate);
+  </script>
+</html>
