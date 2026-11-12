@@ -1,0 +1,850 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="390" onload="init(evt)" viewBox="0 0 1200 390" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="390.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="373" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="373" > </text>
+<g id="frames">
+<g >
+<title>std::vector&lt;coal::details::GJK::SimplexV, std::allocator&lt;coal::details::GJK::SimplexV&gt; &gt;::_M_default_append (6 samples, 4.96%)</title><rect x="663.4" y="149" width="58.5" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="666.39" y="159.5" >std::v..</text>
+</g>
+<g >
+<title>std::invalid_argument::invalid_argument (12 samples, 9.92%)</title><rect x="790.2" y="149" width="117.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="793.17" y="159.5" >std::invalid_a..</text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::nodeCollide (1 samples, 0.83%)</title><rect x="156.3" y="117" width="9.7" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="159.28" y="127.5" ></text>
+</g>
+<g >
+<title>_mm256_sub_ps (1 samples, 0.83%)</title><rect x="49.0" y="101" width="9.8" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="52.01" y="111.5" ></text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (2 samples, 1.65%)</title><rect x="10.0" y="229" width="19.5" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="13.00" y="239.5" ></text>
+</g>
+<g >
+<title>std::invalid_argument::invalid_argument (10 samples, 8.26%)</title><rect x="975.5" y="165" width="97.5" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="978.45" y="175.5" >std::invali..</text>
+</g>
+<g >
+<title>coal::collide (99 samples, 81.82%)</title><rect x="224.5" y="181" width="965.5" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="227.55" y="191.5" >coal::collide</text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (4 samples, 3.31%)</title><rect x="10.0" y="277" width="39.0" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="13.00" y="287.5" >[ld..</text>
+</g>
+<g >
+<title>coal::Sphere::getNodeType (1 samples, 0.83%)</title><rect x="185.5" y="133" width="9.8" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="188.54" y="143.5" ></text>
+</g>
+<g >
+<title>vamp::Vector&lt;vamp::SIMDVector&lt;float __vector (1 samples, 0.83%)</title><rect x="49.0" y="197" width="9.8" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="52.01" y="207.5" ></text>
+</g>
+<g >
+<title>operator new (2 samples, 1.65%)</title><rect x="702.4" y="133" width="19.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="705.40" y="143.5" ></text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (1 samples, 0.83%)</title><rect x="39.3" y="229" width="9.7" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="42.26" y="239.5" ></text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (13 samples, 10.74%)</title><rect x="68.5" y="197" width="126.8" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="71.51" y="207.5" >coal::detail::d..</text>
+</g>
+<g >
+<title>__libc_start_main (116 samples, 95.87%)</title><rect x="58.8" y="293" width="1131.2" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="61.76" y="303.5" >__libc_start_main</text>
+</g>
+<g >
+<title>coal::ShapeBase::getObjectType (2 samples, 1.65%)</title><rect x="380.6" y="165" width="19.5" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="383.58" y="175.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::assign_op&lt;double, double&gt;::assignCoeff (1 samples, 0.83%)</title><rect x="58.8" y="37" width="9.7" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="61.76" y="47.5" ></text>
+</g>
+<g >
+<title>mpb::planning::CoalChecker::valid (116 samples, 95.87%)</title><rect x="58.8" y="213" width="1131.2" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="61.76" y="223.5" >mpb::planning::CoalChecker::valid</text>
+</g>
+<g >
+<title>coal::Sphere::getNodeType (1 samples, 0.83%)</title><rect x="156.3" y="101" width="9.7" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="159.28" y="111.5" ></text>
+</g>
+<g >
+<title>_start (116 samples, 95.87%)</title><rect x="58.8" y="309" width="1131.2" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="61.76" y="319.5" >_start</text>
+</g>
+<g >
+<title>cfree (3 samples, 2.48%)</title><rect x="351.3" y="165" width="29.3" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="354.32" y="175.5" >cf..</text>
+</g>
+<g >
+<title>float __vector (1 samples, 0.83%)</title><rect x="49.0" y="133" width="9.8" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="52.01" y="143.5" ></text>
+</g>
+<g >
+<title>operator new (5 samples, 4.13%)</title><rect x="858.4" y="101" width="48.8" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="861.43" y="111.5" >oper..</text>
+</g>
+<g >
+<title>[libc.so.6] (1 samples, 0.83%)</title><rect x="370.8" y="149" width="9.8" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="373.83" y="159.5" ></text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (2 samples, 1.65%)</title><rect x="10.0" y="245" width="19.5" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="13.00" y="255.5" ></text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (1 samples, 0.83%)</title><rect x="29.5" y="229" width="9.8" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="32.50" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::generic_dense_assignment_kernel&lt;Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::assign_op&lt;double, double&gt;, 0&gt;::assignCoeff (1 samples, 0.83%)</title><rect x="58.8" y="53" width="9.7" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="61.76" y="63.5" ></text>
+</g>
+<g >
+<title>planning_benchm (121 samples, 100.00%)</title><rect x="10.0" y="325" width="1180.0" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="13.00" y="335.5" >planning_benchm</text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (2 samples, 1.65%)</title><rect x="10.0" y="261" width="19.5" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="13.00" y="271.5" ></text>
+</g>
+<g >
+<title>coal::AABB::AABB (1 samples, 0.83%)</title><rect x="88.0" y="165" width="9.8" height="15.0" fill="rgb(249,202,48)" rx="2" ry="2" />
+<text  x="91.02" y="175.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1 samples, 0.83%)</title><rect x="838.9" y="117" width="9.8" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="841.93" y="127.5" ></text>
+</g>
+<g >
+<title>coal::details::EPA::reset (15 samples, 12.40%)</title><rect x="575.6" y="165" width="146.3" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="578.62" y="175.5" >coal::details::EPA..</text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (1 samples, 0.83%)</title><rect x="29.5" y="245" width="9.8" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="32.50" y="255.5" ></text>
+</g>
+<g >
+<title>operator new (4 samples, 3.31%)</title><rect x="624.4" y="133" width="39.0" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="627.38" y="143.5" >ope..</text>
+</g>
+<g >
+<title>bool vamp::robots::UR5::fkcc&lt;8ul&gt; (1 samples, 0.83%)</title><rect x="49.0" y="229" width="9.8" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="52.01" y="239.5" ></text>
+</g>
+<g >
+<title>cfree (3 samples, 2.48%)</title><rect x="936.4" y="133" width="29.3" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="939.45" y="143.5" >cf..</text>
+</g>
+<g >
+<title>mpb::planning::VampPlanner::solve (1 samples, 0.83%)</title><rect x="49.0" y="293" width="9.8" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="52.01" y="303.5" ></text>
+</g>
+<g >
+<title>std::logic_error::~logic_error (11 samples, 9.09%)</title><rect x="1082.7" y="165" width="107.3" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="1085.73" y="175.5" >std::logic_er..</text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (12 samples, 9.92%)</title><rect x="78.3" y="181" width="117.0" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="81.26" y="191.5" >coal::detail::..</text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (4 samples, 3.31%)</title><rect x="10.0" y="293" width="39.0" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="13.00" y="303.5" >[ld..</text>
+</g>
+<g >
+<title>[libc.so.6] (1 samples, 0.83%)</title><rect x="956.0" y="117" width="9.7" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="958.95" y="127.5" ></text>
+</g>
+<g >
+<title>float __vector (1 samples, 0.83%)</title><rect x="49.0" y="117" width="9.8" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="52.01" y="127.5" ></text>
+</g>
+<g >
+<title>operator delete (1 samples, 0.83%)</title><rect x="1180.2" y="149" width="9.8" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1183.25" y="159.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;coal::details::EPA::SimplexFace, std::allocator&lt;coal::details::EPA::SimplexFace&gt; &gt;::_M_default_append (5 samples, 4.13%)</title><rect x="614.6" y="149" width="48.8" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="617.63" y="159.5" >std:..</text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::nodeCollide (2 samples, 1.65%)</title><rect x="166.0" y="133" width="19.5" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="169.03" y="143.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1 samples, 0.83%)</title><rect x="1014.5" y="133" width="9.7" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1017.46" y="143.5" ></text>
+</g>
+<g >
+<title>vamp::planning::RRTC&lt;vamp::robots::UR5, 8ul, 32ul&gt;::solve (1 samples, 0.83%)</title><rect x="49.0" y="261" width="9.8" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="52.01" y="271.5" ></text>
+</g>
+<g >
+<title>void Eigen::internal::call_dense_assignment_loop&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::internal::assign_op&lt;double, double&gt; &gt; (1 samples, 0.83%)</title><rect x="58.8" y="117" width="9.7" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="61.76" y="127.5" ></text>
+</g>
+<g >
+<title>operator delete (1 samples, 0.83%)</title><rect x="965.7" y="165" width="9.8" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="968.70" y="175.5" ></text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (4 samples, 3.31%)</title><rect x="10.0" y="309" width="39.0" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="13.00" y="319.5" >[ld..</text>
+</g>
+<g >
+<title>bool vamp::robots::UR5::fkcc&lt;8ul&gt; (1 samples, 0.83%)</title><rect x="49.0" y="149" width="9.8" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="52.01" y="159.5" ></text>
+</g>
+<g >
+<title>coal::details::EPA::initialize (2 samples, 1.65%)</title><rect x="556.1" y="165" width="19.5" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="559.12" y="175.5" ></text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::nodeCollide (1 samples, 0.83%)</title><rect x="146.5" y="85" width="9.8" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="149.53" y="95.5" ></text>
+</g>
+<g >
+<title>vamp::planning::RRTC&lt;vamp::robots::UR5, 8ul, 32ul&gt;::solve (1 samples, 0.83%)</title><rect x="49.0" y="277" width="9.8" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="52.01" y="287.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::generic_dense_assignment_kernel&lt;Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::assign_op&lt;double, double&gt;, 0&gt;::assignCoeffByOuterInner (1 samples, 0.83%)</title><rect x="58.8" y="69" width="9.7" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="61.76" y="79.5" ></text>
+</g>
+<g >
+<title>vamp::Vector&lt;vamp::SIMDVector&lt;float __vector (1 samples, 0.83%)</title><rect x="49.0" y="181" width="9.8" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="52.01" y="191.5" ></text>
+</g>
+<g >
+<title>boost::serialization::singleton&lt;boost::serialization::void_cast_detail::void_caster_primitive&lt;coal::BVHModel&lt;coal::OBB&gt;, coal::BVHModelBase&gt; &gt;::get_instance (1 samples, 0.83%)</title><rect x="39.3" y="245" width="9.7" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="42.26" y="255.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling&lt;Eigen::internal::generic_dense_assignment_kernel&lt;Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::assign_op&lt;double, double&gt;, 0&gt;, 2, 3&gt;::run (1 samples, 0.83%)</title><rect x="58.8" y="85" width="9.7" height="15.0" fill="rgb(242,171,40)" rx="2" ry="2" />
+<text  x="61.76" y="95.5" ></text>
+</g>
+<g >
+<title>mpb::planning::validatePath (116 samples, 95.87%)</title><rect x="58.8" y="229" width="1131.2" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="61.76" y="239.5" >mpb::planning::validatePath</text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.83%)</title><rect x="49.0" y="309" width="9.8" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="52.01" y="319.5" ></text>
+</g>
+<g >
+<title>cfree (6 samples, 4.96%)</title><rect x="1121.7" y="149" width="58.5" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="1124.74" y="159.5" >cfree</text>
+</g>
+<g >
+<title>Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;&amp; Eigen::NoAlias&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::MatrixBase&gt;::operator=&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt; (1 samples, 0.83%)</title><rect x="58.8" y="165" width="9.7" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="61.76" y="175.5" ></text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (3 samples, 2.48%)</title><rect x="127.0" y="101" width="29.3" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="130.02" y="111.5" >co..</text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::nodeCollide (1 samples, 0.83%)</title><rect x="185.5" y="149" width="9.8" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="188.54" y="159.5" ></text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (10 samples, 8.26%)</title><rect x="97.8" y="165" width="97.5" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="100.77" y="175.5" >coal::detai..</text>
+</g>
+<g >
+<title>[libc.so.6] (116 samples, 95.87%)</title><rect x="58.8" y="277" width="1131.2" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="61.76" y="287.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>coal::Sphere::getNodeType (1 samples, 0.83%)</title><rect x="136.8" y="69" width="9.7" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="139.78" y="79.5" ></text>
+</g>
+<g >
+<title>_GLOBAL__sub_I_PlannerData.cpp (1 samples, 0.83%)</title><rect x="29.5" y="261" width="9.8" height="15.0" fill="rgb(217,59,14)" rx="2" ry="2" />
+<text  x="32.50" y="271.5" ></text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (9 samples, 7.44%)</title><rect x="97.8" y="149" width="87.7" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="100.77" y="159.5" >coal::deta..</text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::leafCollide (1 samples, 0.83%)</title><rect x="136.8" y="85" width="9.7" height="15.0" fill="rgb(229,112,26)" rx="2" ry="2" />
+<text  x="139.78" y="95.5" ></text>
+</g>
+<g >
+<title>apply&lt;vamp::SIMDVector&lt;__vector (1 samples, 0.83%)</title><rect x="49.0" y="165" width="9.8" height="15.0" fill="rgb(240,162,38)" rx="2" ry="2" />
+<text  x="52.01" y="175.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::dense_assignment_loop&lt;Eigen::internal::generic_dense_assignment_kernel&lt;Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::evaluator&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt;, Eigen::internal::assign_op&lt;double, double&gt;, 0&gt;, 3, 2&gt;::run (1 samples, 0.83%)</title><rect x="58.8" y="101" width="9.7" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="61.76" y="111.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (2 samples, 1.65%)</title><rect x="1160.7" y="133" width="19.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1163.74" y="143.5" ></text>
+</g>
+<g >
+<title>malloc (3 samples, 2.48%)</title><rect x="868.2" y="85" width="29.2" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="871.18" y="95.5" >ma..</text>
+</g>
+<g >
+<title>void Eigen::internal::call_assignment_no_alias&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::internal::assign_op&lt;double, double&gt; &gt; (1 samples, 0.83%)</title><rect x="58.8" y="149" width="9.7" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="61.76" y="159.5" ></text>
+</g>
+<g >
+<title>coal::ShapeShapeCollider&lt;coal::Sphere, coal::Sphere&gt;::run (15 samples, 12.40%)</title><rect x="400.1" y="165" width="146.3" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="403.08" y="175.5" >coal::ShapeShapeCo..</text>
+</g>
+<g >
+<title>std::logic_error::logic_error (10 samples, 8.26%)</title><rect x="975.5" y="149" width="97.5" height="15.0" fill="rgb(245,188,44)" rx="2" ry="2" />
+<text  x="978.45" y="159.5" >std::logic_..</text>
+</g>
+<g >
+<title>std::string::_Rep::_S_create (5 samples, 4.13%)</title><rect x="1024.2" y="133" width="48.8" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="1027.21" y="143.5" >std:..</text>
+</g>
+<g >
+<title>mpb::CollisionCallback::collide (102 samples, 84.30%)</title><rect x="195.3" y="197" width="994.7" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="198.29" y="207.5" >mpb::CollisionCallback::collide</text>
+</g>
+<g >
+<title>coal::details::GJK::reset (23 samples, 19.01%)</title><rect x="741.4" y="165" width="224.3" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="744.40" y="175.5" >coal::details::GJK::reset</text>
+</g>
+<g >
+<title>bool vamp::planning::validate_vector&lt;vamp::robots::UR5, 8ul, 32ul&gt; (1 samples, 0.83%)</title><rect x="49.0" y="245" width="9.8" height="15.0" fill="rgb(220,70,16)" rx="2" ry="2" />
+<text  x="52.01" y="255.5" ></text>
+</g>
+<g >
+<title>std::invalid_argument::~invalid_argument (1 samples, 0.83%)</title><rect x="1073.0" y="165" width="9.7" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="1075.98" y="175.5" ></text>
+</g>
+<g >
+<title>__static_initialization_and_destruction_0 (1 samples, 0.83%)</title><rect x="39.3" y="261" width="9.7" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="42.26" y="271.5" ></text>
+</g>
+<g >
+<title>main (116 samples, 95.87%)</title><rect x="58.8" y="261" width="1131.2" height="15.0" fill="rgb(243,179,42)" rx="2" ry="2" />
+<text  x="61.76" y="271.5" >main</text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (4 samples, 3.31%)</title><rect x="127.0" y="133" width="39.0" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="130.02" y="143.5" >coa..</text>
+</g>
+<g >
+<title>coal::Sphere::getNodeType (1 samples, 0.83%)</title><rect x="546.4" y="165" width="9.7" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="549.36" y="175.5" ></text>
+</g>
+<g >
+<title>void coal::Transform3s::setTranslation&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt; &gt; (1 samples, 0.83%)</title><rect x="58.8" y="181" width="9.7" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="61.76" y="191.5" ></text>
+</g>
+<g >
+<title>malloc (2 samples, 1.65%)</title><rect x="702.4" y="117" width="19.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="705.40" y="127.5" ></text>
+</g>
+<g >
+<title>coal::detail::dynamic_AABB_tree::collisionRecurse (3 samples, 2.48%)</title><rect x="127.0" y="117" width="29.3" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="130.02" y="127.5" >co..</text>
+</g>
+<g >
+<title>all (121 samples, 100%)</title><rect x="10.0" y="341" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="351.5" ></text>
+</g>
+<g >
+<title>malloc@plt (1 samples, 0.83%)</title><rect x="897.4" y="85" width="9.8" height="15.0" fill="rgb(246,192,46)" rx="2" ry="2" />
+<text  x="900.44" y="95.5" ></text>
+</g>
+<g >
+<title>malloc (1 samples, 0.83%)</title><rect x="1063.2" y="101" width="9.8" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="1066.22" y="111.5" ></text>
+</g>
+<g >
+<title>operator new (3 samples, 2.48%)</title><rect x="1043.7" y="117" width="29.3" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1046.72" y="127.5" >op..</text>
+</g>
+<g >
+<title>malloc (3 samples, 2.48%)</title><rect x="634.1" y="117" width="29.3" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="637.13" y="127.5" >ma..</text>
+</g>
+<g >
+<title>mpb::planning::runBenchmark (116 samples, 95.87%)</title><rect x="58.8" y="245" width="1131.2" height="15.0" fill="rgb(219,64,15)" rx="2" ry="2" />
+<text  x="61.76" y="255.5" >mpb::planning::runBenchmark</text>
+</g>
+<g >
+<title>[ld-linux-x86-64.so.2] (1 samples, 0.83%)</title><rect x="39.3" y="213" width="9.7" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="42.26" y="223.5" ></text>
+</g>
+<g >
+<title>coal::CollisionObject::setTranslation (1 samples, 0.83%)</title><rect x="58.8" y="197" width="9.7" height="15.0" fill="rgb(208,17,4)" rx="2" ry="2" />
+<text  x="61.76" y="207.5" ></text>
+</g>
+<g >
+<title>std::logic_error::logic_error (9 samples, 7.44%)</title><rect x="819.4" y="133" width="87.8" height="15.0" fill="rgb(245,188,44)" rx="2" ry="2" />
+<text  x="822.42" y="143.5" >std::logic..</text>
+</g>
+<g >
+<title>Eigen::internal::Assignment&lt;Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::Matrix&lt;double, 3, 1, 0, 3, 1&gt;, Eigen::internal::assign_op&lt;double, double&gt;, Eigen::internal::Dense2Dense, void&gt;::run (1 samples, 0.83%)</title><rect x="58.8" y="133" width="9.7" height="15.0" fill="rgb(244,179,42)" rx="2" ry="2" />
+<text  x="61.76" y="143.5" ></text>
+</g>
+<g >
+<title>double coal::internal::ShapeShapeDistance&lt;coal::Sphere, coal::Sphere&gt; (10 samples, 8.26%)</title><rect x="448.8" y="149" width="97.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="451.84" y="159.5" >double coal..</text>
+</g>
+<g >
+<title>std::string::_Rep::_S_create (6 samples, 4.96%)</title><rect x="848.7" y="117" width="58.5" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="851.68" y="127.5" >std::s..</text>
+</g>
+<g >
+<title>vamp::Vector&lt;vamp::SIMDVector&lt;float __vector (1 samples, 0.83%)</title><rect x="49.0" y="213" width="9.8" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="52.01" y="223.5" ></text>
+</g>
+<g >
+<title>coal::details::GJK::initialize (2 samples, 1.65%)</title><rect x="721.9" y="165" width="19.5" height="15.0" fill="rgb(232,125,30)" rx="2" ry="2" />
+<text  x="724.90" y="175.5" ></text>
+</g>
+<g >
+<title>std::logic_error::~logic_error (5 samples, 4.13%)</title><rect x="916.9" y="149" width="48.8" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="919.94" y="159.5" >std:..</text>
+</g>
+<g >
+<title>std::invalid_argument::~invalid_argument (1 samples, 0.83%)</title><rect x="907.2" y="149" width="9.7" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="910.19" y="159.5" ></text>
+</g>
+</g>
+</svg>

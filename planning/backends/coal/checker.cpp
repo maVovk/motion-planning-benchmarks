@@ -59,8 +59,6 @@ bool CoalChecker::valid(const Configuration& configuration) {
     impl_->robot[i]->computeAABB();
   }
 
-  // Match exactly the checked pairs in VAMP, excluding intentional link
-  // overlaps.
   for (const auto& [first, second] : selfCollisionPairs()) {
     impl_->callback.init();
     if (impl_->callback.collide(impl_->robot[first].get(),

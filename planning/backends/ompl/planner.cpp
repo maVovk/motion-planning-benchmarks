@@ -24,9 +24,9 @@
 #include <utility>
 
 #include "backends/coal/checker.hpp"
+#include "core/constants.hpp"
 #include "core/robot.hpp"
 #include "core/types.hpp"
-#include "runtime/deadline.hpp"
 
 namespace mpb::planning {
 
@@ -59,41 +59,32 @@ class SeededRRTConnect : public ompl::geometric::RRTConnect {
   }
 };
 
-// Same nominal density as VAMP, including its interleaved/raked sample
-// locations. Coal evaluates them one at a time, while VAMP processes eight
-// lanes together.
 class CoalMotionValidator : public ob::MotionValidator {
  public:
   CoalMotionValidator(const ob::SpaceInformationPtr& si, CoalChecker& checker,
                       std::uint32_t resolution)
       : MotionValidator(si), checker_(checker), resolution_(resolution) {}
 
+
   bool checkMotion(const ob::State* first,
                    const ob::State* second) const override {
-    std::pair<ob::State*, double> unused{nullptr, 0};
-    return checkMotion(first, second, unused);
+      std::pair<ob::State*, double> placeholder = {nullptr, 0};
+      return checkMotion(first, second, placeholder);
   }
 
-  bool checkMotion(const ob::State* first, const ob::State* second,
-                   std::pair<ob::State*, double>& last_valid) const override {
+  bool checkMotion(const ob::State* first,
+                   const ob::State* second, std::pair<ob::State*, double>&) const override {
     const auto start = configuration(first);
     const auto goal = configuration(second);
-    const auto batches = std::max(
-        1u, std::uint32_t(std::ceil(configurationDistance(start, goal) *
-                                    resolution_ / kSimdWidth)));
+    const auto samples = std::max(1u, static_cast<uint32_t>(std::ceil(
+                                          configurationDistance(start, goal) *
+                                          resolution_ / kSimdWidth))) *
+                                        kSimdWidth;
 
-    // Scan in increasing interpolation order so last_valid satisfies OMPL's
-    // contract.
-    const auto samples = batches * kSimdWidth;
-    for (std::uint32_t i = 1; i <= samples; ++i) {
+    for (uint32_t i = 1; i <= samples; ++i) {
       const auto q = interpolate(start, goal, double(i) / samples);
       if (!checker_.valid(q)) {
         ++invalid_;
-        last_valid.second = double(i - 1) / samples;
-        if (last_valid.first) {
-          si_->getStateSpace()->interpolate(first, second, last_valid.second,
-                                            last_valid.first);
-        }
         return false;
       }
     }
@@ -104,7 +95,7 @@ class CoalMotionValidator : public ob::MotionValidator {
 
  private:
   CoalChecker& checker_;
-  std::uint32_t resolution_;
+  uint32_t resolution_;
 };
 }  // namespace
 
@@ -125,8 +116,7 @@ bool OmplPlanner::valid(const Configuration& configuration) const {
 }
 
 PlanResult OmplPlanner::solve(const Problem& problem,
-                              const PlanningConfig& config,
-                              std::uint32_t seed) {
+                              const PlanningConfig& config, uint32_t seed) {
   const auto setup_start = Clock::now();
 
   ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
@@ -135,10 +125,8 @@ PlanResult OmplPlanner::solve(const Problem& problem,
   auto space = std::make_shared<ob::RealVectorStateSpace>(kJoints);
   ob::RealVectorBounds bounds(kJoints);
 
-  // Exact float bounds used by the VAMP UR5 sampler; no periodic wrap in either
-  // backend.
-  bounds.setLow(-3.1415927410125732);
-  bounds.setHigh(3.1415927410125732);
+  bounds.setLow(-PI);
+  bounds.setHigh(PI);
   space->setBounds(bounds);
 
   space->setStateSamplerAllocator([seed](const ob::StateSpace* state_space) {
@@ -172,10 +160,8 @@ PlanResult OmplPlanner::solve(const Problem& problem,
       std::chrono::duration<double, std::micro>(Clock::now() - setup_start)
           .count();
 
-  SolveDeadline deadline(config.timeout_seconds);
   const auto solve_start = Clock::now();
-  const auto status = planner->solve(
-      ob::timedPlannerTerminationCondition(config.timeout_seconds));
+  const auto status = planner->solve(ob::plannerNonTerminatingCondition());
   result.solve_us =
       std::chrono::duration<double, std::micro>(Clock::now() - solve_start)
           .count();

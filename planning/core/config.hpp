@@ -8,10 +8,8 @@ namespace mpb::planning {
 
 struct PlanningConfig {
   float range = 1.0F;
-  uint32_t motion_resolution =
-      32;  // samples per radian of joint-space L2 distance
+  static constexpr uint32_t motion_resolution = 32;
   double validation_step = 1.0 / 128.0;
-  double timeout_seconds = 1.0;
   size_t max_iterations = 100000;
   size_t max_samples = 100000;
 };

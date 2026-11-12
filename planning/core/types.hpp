@@ -1,5 +1,7 @@
 #pragma once
 
+#include <immintrin.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -10,7 +12,7 @@ namespace mpb::planning {
 
 inline constexpr size_t kJoints = 6;
 inline constexpr size_t kRobotSpheres = 40;
-inline constexpr size_t kSimdWidth = 8;
+inline constexpr size_t kSimdWidth = sizeof(__m256) / sizeof(float);
 
 using Configuration = std::array<float, kJoints>;
 using Path = std::vector<Configuration>;
@@ -21,7 +23,7 @@ struct Sphere {
 };
 
 struct Problem {
-  std::uint32_t seed;
+  uint32_t seed;
   std::vector<Sphere> obstacles;
   Configuration start;
   Configuration goal;

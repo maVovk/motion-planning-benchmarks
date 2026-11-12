@@ -8,7 +8,6 @@
 #include <memory>
 #include <random>
 #include <ratio>
-#include <stdexcept>
 #include <vamp/collision/environment.hh>
 #include <vamp/collision/factory.hh>
 #include <vamp/planning/rrtc.hh>
@@ -20,7 +19,6 @@
 
 #include "core/robot.hpp"
 #include "core/types.hpp"
-#include "runtime/deadline.hpp"
 
 namespace mpb::planning {
 
@@ -31,8 +29,6 @@ using Environment = vamp::collision::Environment<vamp::FloatVector<kSimdWidth>>;
 using Clock = std::chrono::steady_clock;
 
 Robot::Configuration packed(const Configuration& configuration) {
-  // VAMP loads a complete SIMD register: pad six joints to eight aligned
-  // values.
   alignas(vamp::FloatVectorAlignment)
       std::array<float, Robot::Configuration::num_scalars_rounded>
           values{};
@@ -81,11 +77,10 @@ bool VampPlanner::valid(const Configuration& configuration) const {
 PlanResult VampPlanner::solve(const Problem& problem,
                               const PlanningConfig& config,
                               std::uint32_t seed) {
-  if (config.motion_resolution != Robot::resolution) {
-    throw std::invalid_argument("VAMP UR5 resolution is fixed at 32");
-  }
+  static_assert(PlanningConfig::motion_resolution == Robot::resolution);
 
   const auto setup_start = Clock::now();
+
   std::mt19937_64 keys(seed);
   const auto key1 = keys();
   const auto key2 = keys();
@@ -104,7 +99,6 @@ PlanResult VampPlanner::solve(const Problem& problem,
       std::chrono::duration<double, std::micro>(Clock::now() - setup_start)
           .count();
 
-  SolveDeadline deadline(config.timeout_seconds);
   const auto solve_start = Clock::now();
   const auto plan =
       vamp::planning::RRTC<Robot, kSimdWidth, Robot::resolution>::solve(

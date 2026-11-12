@@ -1,9 +1,14 @@
 #include "benchmarks/planning_benchmarks.hpp"
 
+#include <benchmark/benchmark.h>
+#include <fmt/format.h>
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <iostream>
-#include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 
 #include "backends/ompl/planner.hpp"
 #include "backends/vamp/planner.hpp"
@@ -14,7 +19,6 @@
 #include "core/validation.hpp"
 
 namespace mpb::planning {
-
 namespace {
 
 using Json = nlohmann::json;
@@ -22,7 +26,7 @@ using Clock = std::chrono::steady_clock;
 
 template <typename Planner>
 PlanResult solveWithPlanner(const Problem& problem,
-                            const PlanningConfig& config, std::uint32_t seed) {
+                            const PlanningConfig& config, uint32_t seed) {
   const auto setup_start = Clock::now();
   Planner planner(problem.obstacles);
   const double environment_us =
@@ -36,69 +40,57 @@ PlanResult solveWithPlanner(const Problem& problem,
 }
 
 PlanResult solveProblem(const Problem& problem, const PlanningConfig& config,
-                        const std::string& planner,
-                        std::uint32_t planner_seed) {
+                        std::string_view planner, uint32_t planner_seed) {
   if (planner == "ompl") {
     return solveWithPlanner<OmplPlanner>(problem, config, planner_seed);
+  } else if (planner == "vamp") {
+    return solveWithPlanner<VampPlanner>(problem, config, planner_seed);
   }
 
-  return solveWithPlanner<VampPlanner>(problem, config, planner_seed);
+  throw std::runtime_error("Unknown planner passed to the solve function");
 }
 
-void validateAndReportScene(const Problem& problem,
-                            const PlanningConfig& config) {
-  const auto count = problem.obstacles.size();
-  const auto scene_seed = problem.seed;
+void benchmarkPlanning(benchmark::State& state, std::string_view planner) {
+  const PlanningConfig config;
+  const auto problem = generateProblem(state.range(0), 42);
+  double setup_us = 0;
+  double path_length = 0;
 
-  // Fail on disagreement between coal, VAMP, and the analytic sphere oracle.
-  // Check both endpoints as well as deterministic random configurations.
-  constexpr std::uint32_t random_samples = 2000;
-  compareCheckers(problem, random_samples);
-
-  Json scene{{"obstacles", count},
-             {"scene_seed", scene_seed},
-             {"checked_states", random_samples + 2},
-             {"valid", true},
-             {"start", problem.start},
-             {"goal", problem.goal},
-             {"spheres", Json::array()},
-             {"direct_path_valid",
-              validatePath(problem, Path{problem.start, problem.goal},
-                           config.validation_step)
-                  .valid}};
-
-  for (const auto& sphere : problem.obstacles) {
-    scene["spheres"].push_back(
-        {{"center", sphere.center}, {"radius", sphere.radius}});
-  }
-
-  std::cout << scene << std::endl;
-}
-
-// Repetition supplies enough work for external sampling of fast solves.
-void repeatSolves(const Problem& problem, const PlanningConfig& config,
-                  const CommandLineOptions& options) {
-  const auto end =
-      Clock::now() + std::chrono::duration<double>(options.profile_seconds);
-  size_t solves = 0;
-
-  while (Clock::now() < end) {
-    auto repeated =
-        solveProblem(problem, config, options.planner, options.planner_seed);
-
-    if (repeated.path.empty()) {
-      throw std::runtime_error("Profile solve failed");
+  for (auto _ : state) {
+    const auto result = solveProblem(problem, config, planner, 101);
+    state.SetIterationTime(result.solve_us / 1e6);
+    std::optional<Path> sampled_path = std::nullopt;
+    const auto validation =
+        validatePath(problem, result.path, config.validation_step, sampled_path);
+    if (!validation.valid) {
+      state.SkipWithError(result.path.empty()
+                              ? "Planner did not find a path"
+                              : "Returned path failed dense validation");
+      break;
     }
-
-    ++solves;
+    setup_us += result.setup_us;
+    path_length += validation.path_length;
   }
 
-  std::cout << Json{{"planner", options.planner},
-                    {"obstacles", problem.obstacles.size()},
-                    {"profile_solves", solves}}
-            << std::endl;
+  state.counters["setup_us"] =
+      benchmark::Counter(setup_us, benchmark::Counter::kAvgIterations);
+  state.counters["path_length"] =
+      benchmark::Counter(path_length, benchmark::Counter::kAvgIterations);
 }
+
 }  // namespace
+
+void registerBenchmarks() {
+  for (const std::string_view planner : {"vamp", "ompl"}) {
+    benchmark::RegisterBenchmark(
+        fmt::format("Planning/{}", planner),
+        [planner](benchmark::State& state) { benchmarkPlanning(state, planner); })
+        ->RangeMultiplier(10)
+        ->Range(1, 100)
+        ->UseManualTime()
+        ->Unit(benchmark::kMicrosecond);
+  }
+}
 
 void describeConfig() {
   const PlanningConfig planning;
@@ -107,7 +99,6 @@ void describeConfig() {
   std::cout << Json{{"range", planning.range},
                     {"motion_resolution", planning.motion_resolution},
                     {"validation_step", planning.validation_step},
-                    {"timeout_seconds", planning.timeout_seconds},
                     {"max_iterations", planning.max_iterations},
                     {"max_samples", planning.max_samples},
                     {"obstacle_lower", problem.lower},
@@ -129,26 +120,21 @@ void runBenchmark(const CommandLineOptions& options) {
   const PlanningConfig config;
 
   const auto problem = generateProblem(count, scene_seed);
-  if (planner == "check") {
-    validateAndReportScene(problem, config);
-    return;
-  }
-
   const auto result = solveProblem(problem, config, planner, planner_seed);
+  std::optional<Path> sampled_path =
+      export_file.empty() ? std::nullopt : std::make_optional(Path{});
   const auto validation =
-      validatePath(problem, result.path, config.validation_step);
+      validatePath(problem, result.path, config.validation_step, sampled_path,
+                   options.correctness ? ValidationMode::Correctness
+                                       : ValidationMode::Standard);
 
   if (!result.path.empty() && !validation.valid) {
     throw std::runtime_error("Returned path failed dense validation");
   }
 
   if (!export_file.empty() && validation.valid) {
-    exportTrajectory(export_file, problem, result, planner);
-  }
-
-  if (options.profile_seconds > 0) {
-    repeatSolves(problem, config, options);
-    return;
+    exportTrajectory(export_file, problem, result, planner, planner_seed,
+                     sampled_path.value());
   }
 
   std::cout << Json{{"planner", planner},

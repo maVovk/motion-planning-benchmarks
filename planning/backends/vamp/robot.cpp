@@ -20,6 +20,7 @@ std::array<Sphere, kRobotSpheres> robotSpheres(
   static_assert(Robot::dimension == kJoints &&
                 Robot::n_spheres == kRobotSpheres);
 
+  // let's try to utilize all kSimdWidth blocks to get the best performance
   Robot::ConfigurationBlock<kSimdWidth> block;
   for (size_t i = 0; i < kJoints; ++i) {
     block[i] = vamp::FloatVector<kSimdWidth>::fill(configuration[i]);
@@ -38,9 +39,9 @@ std::array<Sphere, kRobotSpheres> robotSpheres(
   return result;
 }
 
-const std::vector<std::pair<std::uint32_t, std::uint32_t>>&
+const std::vector<std::pair<uint32_t, uint32_t>>&
 selfCollisionPairs() {
-  static const std::vector<std::pair<std::uint32_t, std::uint32_t>> pairs(
+  static const std::vector<std::pair<uint32_t, uint32_t>> pairs(
       kSelfCollisionPairs.begin(), kSelfCollisionPairs.end());
   return pairs;
 }

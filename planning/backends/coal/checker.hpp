@@ -7,7 +7,6 @@
 
 namespace mpb::planning {
 
-// Owns obstacle and robot coal objects; one checker per planning thread.
 class CoalChecker {
  public:
   explicit CoalChecker(const std::vector<Sphere>& obstacles);

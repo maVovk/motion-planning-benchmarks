@@ -13,10 +13,17 @@ CommandLineOptions parseCommandLine(int argc, char** argv) {
     return options;
   }
 
+  if (argc > 1 && std::string_view(argv[1]) == "--correctness") {
+    options.correctness = true;
+    --argc;
+    ++argv;
+  }
+
   if (argc < 5) {
     throw std::invalid_argument(
-        "usage: planning_benchmark {vamp|ompl|check} N scene_seed planner_seed "
-        "[--export FILE] [--profile-seconds SEC]");
+        "usage: planning_benchmark [--benchmark_* options] or "
+        "[--correctness] {vamp|ompl} N scene_seed planner_seed "
+        "[--export FILE]");
   }
 
   options.planner = argv[1];
@@ -25,11 +32,10 @@ CommandLineOptions parseCommandLine(int argc, char** argv) {
   options.scene_seed = std::stoul(argv[3]);
   options.planner_seed = std::stoul(argv[4]);
 
-  const auto count = options.obstacle_count;
-  if (count != 1 && count != 10 && count != 100) {
-    throw std::invalid_argument("N must be 1, 10 or 100");
+  if (options.obstacle_count == 0) {
+    throw std::invalid_argument("N must be positive");
   }
-  if (planner != "vamp" && planner != "ompl" && planner != "check") {
+  if (planner != "vamp" && planner != "ompl") {
     throw std::invalid_argument("Unknown planner");
   }
 
@@ -40,8 +46,6 @@ CommandLineOptions parseCommandLine(int argc, char** argv) {
 
     if (std::string(argv[i]) == "--export") {
       options.export_file = argv[i + 1];
-    } else if (std::string(argv[i]) == "--profile-seconds") {
-      options.profile_seconds = std::stod(argv[i + 1]);
     } else {
       throw std::invalid_argument("Unknown option");
     }
